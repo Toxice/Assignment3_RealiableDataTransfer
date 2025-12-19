@@ -1,0 +1,5 @@
+message: "input_message.txt"
+maximum_msg_size: 1024
+windows_size: 5
+timeout: 3
+dynamic_message_size: False
