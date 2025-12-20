@@ -5,11 +5,17 @@ import socket
 HOST = "127.0.0.1"
 PORT = 5555
 
+# retrieves the sequence number and use it as ACK number for the response
+def get_response_ack_number(payload: dict) -> int:
+    return payload.get('seq_number')
+
+
 class Reliable_server:
     def __init__(self, host, port):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.ack_counter = 0
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         with self.server_socket as s:
             s.bind((self.host, self.port))
