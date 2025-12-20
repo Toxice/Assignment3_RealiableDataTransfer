@@ -33,6 +33,7 @@ class ReliableClient:
 def __main__():
     client = ReliableClient("127.0.0.1", 5555)
     client.init_client()
+    print()
 
 if __name__ == "__main__":
     __main__()

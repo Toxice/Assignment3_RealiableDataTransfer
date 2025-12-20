@@ -41,6 +41,7 @@ class Reliable_server:
 def __main__():
     server = Reliable_server("127.0.0.1", 5555)
     server.accept_connection()
+    print()
 
 if __name__ == "__main__":
     __main__()
