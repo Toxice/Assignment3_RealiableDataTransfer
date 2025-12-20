@@ -6,7 +6,7 @@ class Window:
         self.window = buffer
         self.window_size = size
 
-class Client:
+class ReliableClient:
     def __init__(self, host, port, timer=0, window=5,):
         self.host = host
         self.port = port
