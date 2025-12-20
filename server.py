@@ -1,53 +1,141 @@
 import json
 import socket
+import os
 
-# Default Parameters
+# Default Server Configuration
 HOST = "127.0.0.1"
 PORT = 5555
 
-# retrieves the sequence number and use it as ACK number for the response
-def get_response_ack_number(payload: dict) -> int:
-    return payload.get('seq_number')
+
+def load_server_config():
+    """
+    Handles the requirement to load parameters from User Input OR a File.
+    """
+    config = {
+        "max_msg_size": 20,
+        "dynamic": False
+    }
+
+    print("--- Server Configuration ---")
+    mode = input("Load from file (f) or manual input (m)? ").strip().lower()
+
+    if mode == 'f':
+        filename = input("Enter config file path (default: server_config.txt): ").strip() or "server_config.txt"
+        if os.path.exists(filename):
+            with open(filename, 'r') as f:
+                for line in f:
+                    # Clean up line
+                    line = line.strip()
+                    if ":" in line:
+                        key, val = line.split(":", 1)
+                        key = key.strip()
+                        val = val.strip()
+
+                        if key == "maximum_msg_size":
+                            config["max_msg_size"] = int(val)
+                        elif key == "dynamic message size":
+                            config["dynamic"] = (val.lower() == "true")
+            print("Loaded config from file.")
+        else:
+            print("File not found! Using defaults.")
+
+    else:
+        # Manual User Input
+        try:
+            size_in = input("Enter Max Message Size (bytes): ")
+            config["max_msg_size"] = int(size_in)
+
+            dyn_in = input("Enable Dynamic Message Size? (True/False): ")
+            config["dynamic"] = (dyn_in.strip().lower() == "true")
+        except ValueError:
+            print("Invalid input. Using defaults.")
+
+    return config
 
 
 class Reliable_server:
-    def __init__(self, host, port):
+    def __init__(self, host, port, config):
         self.host = host
         self.port = port
+        self.config = config  # Store the loaded config
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.ack_counter = 0
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        with self.server_socket as s:
-            s.bind((self.host, self.port))
-            s.listen(1)
-            print(f"listen on {self.host}:{self.port}")
-            self.conn, self.address = s.accept()
+        self.conn = None
+        self.address = None
+        self.expected_seq = 0
+        self.received_buffer = {}
 
-    def accept_connection(self):
-        with self.conn as server:
-            raw_buffer = b""
-            while True:
-                chunk = server.recv(1024)
-                if not chunk:
-                    print("Client Disconnected")
-                    break
-                raw_buffer += chunk
+    def start(self):
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen(1)
+        print(f"Server listening on {self.host}:{self.port}")
+        self.conn, self.address = self.server_socket.accept()
+        print(f"Connection from {self.address}")
 
-                while b"\n" in raw_buffer:
-                    line, _, raw_buffer = raw_buffer.partition(b"\n")
+        if not self.handle_handshake():
+            return
 
-                    data = line.decode().strip()
-                    if data == "SYN":
-                        print(f"Accepted SYN from {self.address}, Sending SYN/ACK")
-                        server.sendall(b"SYN/ACK\n")
+        self.handle_config_negotiation()
+        self.receive_loop()
 
-                    elif data == "ACK":
-                        print("Handshake Established (ACK received)")
+    def handle_handshake(self):
+        data = self.conn.recv(1024).decode().strip()
+        if data == "SYN":
+            self.conn.sendall(b"SYN/ACK")
+            data = self.conn.recv(1024).decode().strip()
+            if data == "ACK":
+                print("Handshake Completed.")
+                return True
+        return False
 
-def __main__():
-    server = Reliable_server("127.0.0.1", 5555)
-    server.accept_connection()
-    print()
+    def handle_config_negotiation(self):
+        # Client asks for max size
+        data = self.conn.recv(1024).decode().strip()
+        if "SIZE_REQ" in data:
+            size = self.config["max_msg_size"]
+            print(f"Sending Max Size: {size}")
+            # Send as string
+            self.conn.sendall(str(size).encode())
+
+    def receive_loop(self):
+        while True:
+            try:
+                chunk = self.conn.recv(4096)
+                if not chunk: break
+
+                messages = chunk.decode().split('\n')
+                for msg_str in messages:
+                    if not msg_str: continue
+                    try:
+                        packet = json.loads(msg_str)
+                    except:
+                        continue
+
+                    if packet.get("command") == "PUSH":
+                        seq = packet.get("sequence_number")
+                        if seq == self.expected_seq:
+                            print(f"Packet {seq} received in order.")
+                            self.expected_seq += 1
+                            while self.expected_seq in self.received_buffer:
+                                del self.received_buffer[self.expected_seq]
+                                self.expected_seq += 1
+                        elif seq > self.expected_seq:
+                            self.received_buffer[seq] = packet.get("content")
+
+                        # Send ACK for the highest contiguous
+                        self.send_ack(self.expected_seq - 1)
+            except Exception as e:
+                print(e)
+                break
+        self.conn.close()
+
+    def send_ack(self, ack_num):
+        ack_packet = {"type": "ACK", "ack_seq": ack_num}
+        self.conn.sendall((json.dumps(ack_packet) + "\n").encode())
+
 
 if __name__ == "__main__":
-    __main__()
+    # Load configuration before starting server
+    server_config = load_server_config()
+    server = Reliable_server(HOST, PORT, server_config)
+    server.start()
